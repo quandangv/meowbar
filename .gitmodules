@@ -1,0 +1,9 @@
+[submodule "cmake"]
+	path = cmake
+	url = git@github.com:quandangv/cmake_module
+[submodule "lib/strings"]
+	path = lib/strings
+	url = git@github.com:quandangv/strings
+[submodule "lib/googletest"]
+	path = lib/googletest
+	url = git@github.com:google/googletest

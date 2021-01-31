@@ -2,4 +2,7 @@
 
 #include "gtest/gtest.h"
 
-using namespace std;
+#include <iostream>
+
+using namespace ::testing;
+using std::vector, std::endl, std::string;
