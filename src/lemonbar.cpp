@@ -39,7 +39,7 @@ struct font_t {
 using font_p = std::unique_ptr<font_t>;
 
 struct monitor_t {
-  char *name;
+  std::string name;
   uint32_t x, y, width, height;
   xcb_window_t window;
   xcb_pixmap_t pixmap;
@@ -627,8 +627,7 @@ parse (char *text)
                 const size_t name_len = block_end - (p + 1);
                 cur_mon = monhead;
                 while (cur_mon->next) {
-                  if (cur_mon->name &&
-                      !strncmp(cur_mon->name, p + 1, name_len))
+                  if (cur_mon->name == p + 1)
                     break;
                   cur_mon = cur_mon->next;
                 }
@@ -856,7 +855,7 @@ set_ewmh_atoms ()
 }
 
 monitor_t *
-monitor_new (int x, int y, int width, int height, char *name)
+monitor_new (int x, int y, int width, int height, std::string name)
 {
   monitor_t *ret;
 
@@ -960,7 +959,7 @@ monitor_create_chain (monitor_t *mons, const int num)
           mons[i].y,
           min(width, mons[i].width - left),
           mons[i].height,
-          mons[i].name? strdup(mons[i].name) : nullptr);
+          mons[i].name);
 
       if (!mon)
         break;
@@ -1007,11 +1006,7 @@ get_randr_monitors ()
 
   // Every entry starts with a size of 0, making it invalid until we fill in
   // the data retrieved from the Xserver.
-  monitor_t *mons = (monitor_t*)calloc(num, sizeof(monitor_t));
-  if (!mons) {
-    fprintf(stderr, "failed to allocate the monitor array\n");
-    return;
-  }
+  std::vector<monitor_t> mons;
 
   // Get all outputs
   for (i = 0; i < num; i++) {
@@ -1032,25 +1027,18 @@ get_randr_monitors ()
     if (!ci_reply) {
       fprintf(stderr, "Failed to get RandR crtc info\n");
       free(rres_reply);
-      goto cleanup_mons;
+      return;
     }
 
     int name_len = xcb_randr_get_output_info_name_length(oi_reply);
-    char *name_ptr = reinterpret_cast<char*>(xcb_randr_get_output_info_name(oi_reply));
+    std::string name_ptr(reinterpret_cast<char*>(xcb_randr_get_output_info_name(oi_reply)));
 
     bool is_valid = true;
 
     if (is_valid) {
-      char *alloc_name = (char*)calloc(name_len + 1, 1);
-      if (!alloc_name) {
-        fprintf(stderr, "failed to allocate output name\n");
-        exit(EXIT_FAILURE);
-      }
-      memcpy(alloc_name, name_ptr, name_len);
-
       // There's no need to handle rotated screens here (see #69)
-      mons[i] = (monitor_t){ alloc_name, uint32_t(ci_reply->x), uint32_t(ci_reply->y),
-        ci_reply->width, ci_reply->height, 0, 0, nullptr, nullptr };
+      mons.emplace_back(name_ptr, uint32_t(ci_reply->x), uint32_t(ci_reply->y),
+        ci_reply->width, ci_reply->height, 0, 0, nullptr, nullptr);
       valid += 1;
     }
 
@@ -1068,7 +1056,7 @@ get_randr_monitors ()
     for (j = 0; j < num; j++) {
       // Does I contain J ?
 
-      if (i != j && mons[j].width && !mons[j].name) {
+      if (i != j && mons[j].width && mons[j].name.empty()) {
         if (mons[j].x >= mons[i].x && mons[j].x + mons[j].width <= mons[i].x + mons[i].width &&
           mons[j].y >= mons[i].y && mons[j].y + mons[j].height <= mons[i].y + mons[i].height) {
           mons[j].width = 0;
@@ -1090,12 +1078,6 @@ get_randr_monitors ()
   } else {
     fprintf(stderr, "No usable RandR output found\n");
   }
-
-cleanup_mons:
-  for (i = 0; i < num; i++) {
-    free(mons[i].name);
-  }
-  free(mons);
 }
 
 #ifdef WITH_XINERAMA
@@ -1295,7 +1277,7 @@ init (char *wm_name)
     }
 
     // If no RandR outputs or Xinerama screens, fall back to using whole screen
-    monhead = monitor_new(0, 0, bw, scr->height_in_pixels, nullptr);
+    monhead = monitor_new(0, 0, bw, scr->height_in_pixels, "");
   }
 
   if (!monhead)
@@ -1343,7 +1325,6 @@ cleanup ()
     monitor_t *next = monhead->next;
     xcb_destroy_window(c, monhead->window);
     xcb_free_pixmap(c, monhead->pixmap);
-    free(monhead->name);
     free(monhead);
     monhead = next;
   }
