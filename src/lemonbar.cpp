@@ -107,7 +107,6 @@ static std::vector<area_t> area_stack;
 static const rgba_t BLACK = rgba_t(0, 0, 0, 255);
 static const rgba_t WHITE = rgba_t(255, 255, 255, 255);
 
-static int num_outputs = 0;
 static std::vector<std::string> output_names;
 
 char*
@@ -925,9 +924,8 @@ monitor_create_chain (monitor_t *mons, const int num)
   int width = 0, height = 0;
   int left = bx;
 
-  // Sort before use, but only if specific outputs were not specified on command line
-  if (!num_outputs)
-    qsort(mons, num, sizeof(monitor_t), mon_sort_cb);
+  // Sort before use
+  qsort(mons, num, sizeof(monitor_t), mon_sort_cb);
 
   for (i = 0; i < num; i++) {
     int h = mons[i].y + mons[i].height;
@@ -1009,7 +1007,7 @@ get_randr_monitors ()
 
   // Every entry starts with a size of 0, making it invalid until we fill in
   // the data retrieved from the Xserver.
-  monitor_t *mons = (monitor_t*)calloc(max(num, num_outputs), sizeof(monitor_t));
+  monitor_t *mons = (monitor_t*)calloc(num, sizeof(monitor_t));
   if (!mons) {
     fprintf(stderr, "failed to allocate the monitor array\n");
     return;
@@ -1041,23 +1039,6 @@ get_randr_monitors ()
     char *name_ptr = reinterpret_cast<char*>(xcb_randr_get_output_info_name(oi_reply));
 
     bool is_valid = true;
-
-    if (num_outputs) {
-      // Skip outputs missing from the list.
-      is_valid = false;
-      // Allocate monitors following the specified order.
-      for (j = 0; j < num_outputs; j++) {
-        // Already allocated, the list contains a duplicate.
-        if (mons[j].name)
-          break;
-
-        output_names[j] = name_ptr;
-        if (output_names[j].size() == name_len) {
-          is_valid = true;
-          break;
-        }
-      }
-    }
 
     if (is_valid) {
       char *alloc_name = (char*)calloc(name_len + 1, 1);
@@ -1124,11 +1105,6 @@ get_xinerama_monitors ()
   xcb_xinerama_query_screens_reply_t *xqs_reply;
   xcb_xinerama_screen_info_iterator_t iter;
   int screens;
-
-  if (num_outputs) {
-    fprintf(stderr, "Using output names with Xinerama is not yet supported\n");
-    return;
-  }
 
   xqs_reply = xcb_xinerama_query_screens_reply(c,
       xcb_xinerama_query_screens_unchecked(c), nullptr);
@@ -1302,11 +1278,6 @@ init (char *wm_name)
     }
   }
 #endif
-
-  if (!monhead && num_outputs != 0) {
-    fprintf(stderr, "Failed to find any specified outputs\n");
-    exit(EXIT_FAILURE);
-  }
 
   if (!monhead) {
     // If I fits I sits
