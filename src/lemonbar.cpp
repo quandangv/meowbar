@@ -25,10 +25,6 @@
 
 // Here be dragons
 
-#define max(a,b) ((a) > (b) ? (a) : (b))
-#define min(a,b) ((a) < (b) ? (a) : (b))
-#define indexof(c,s) (strchr((s),(c))-(s))
-
 struct font_t {
   xcb_font_t ptr;
   int descent, height, width;
@@ -340,7 +336,7 @@ parse_color (const char *str, char **end, const rgba_t def)
 void
 set_attribute (const char modifier, const char attribute)
 {
-  int pos = indexof(attribute, "ou");
+  auto pos = string("ou").find(attribute);
 
   if (pos < 0) {
     fprintf(stderr, "Invalid attribute \"%c\" found\n", attribute);
@@ -925,7 +921,7 @@ monitor_create_chain (monitor_t *mons, const int num)
       mon_list.emplace_back(monitor_new(
           mons[i].x + left,
           mons[i].y,
-          min(width, mons[i].width - left),
+          std::min(width, mons[i].width - left),
           mons[i].height,
           mons[i].name
       ));
@@ -1190,7 +1186,7 @@ init (char *wm_name)
   // To make the alignment uniform, find maximum height
   int maxh = font_list[0]->height;
   for (int i = 1; i < font_list.size(); i++)
-    maxh = max(maxh, font_list[i]->height);
+    maxh = std::max(maxh, font_list[i]->height);
 
   // Set maximum height to all fonts
   for (int i = 0; i < font_list.size(); i++)
