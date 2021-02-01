@@ -43,7 +43,6 @@ struct monitor_t {
   uint32_t x, y, width, height;
   xcb_window_t window;
   xcb_pixmap_t pixmap;
-  struct monitor_t *prev, *next;
 };
 
 struct area_t {
@@ -92,7 +91,7 @@ static xcb_screen_t *scr;
 static xcb_gcontext_t gc[GC_MAX];
 static xcb_visualid_t visual;
 static xcb_colormap_t colormap;
-static monitor_t *monhead, *montail;
+static std::vector<monitor_t> mon_list;
 static std::vector<font_p> font_list;
 static int font_index = -1;
 static uint32_t attrs = 0;
@@ -202,49 +201,49 @@ xcb_void_cookie_t xcb_poly_text_16_simple(xcb_connection_t * c,
 }
 
 int
-shift (monitor_t *mon, int x, int align, int ch_width)
+shift (monitor_t& mon, int x, int align, int ch_width)
 {
   switch (align) {
     case ALIGN_C:
-      xcb_copy_area(c, mon->pixmap, mon->pixmap, gc[GC_DRAW],
-          mon->width / 2 - x / 2, 0,
-          mon->width / 2 - (x + ch_width) / 2, 0,
+      xcb_copy_area(c, mon.pixmap, mon.pixmap, gc[GC_DRAW],
+          mon.width / 2 - x / 2, 0,
+          mon.width / 2 - (x + ch_width) / 2, 0,
           x, bh);
-      x = mon->width / 2 - (x + ch_width) / 2 + x;
+      x = mon.width / 2 - (x + ch_width) / 2 + x;
       break;
     case ALIGN_R:
-      xcb_copy_area(c, mon->pixmap, mon->pixmap, gc[GC_DRAW],
-          mon->width - x, 0,
-          mon->width - x - ch_width, 0,
+      xcb_copy_area(c, mon.pixmap, mon.pixmap, gc[GC_DRAW],
+          mon.width - x, 0,
+          mon.width - x - ch_width, 0,
           x, bh);
-      x = mon->width - ch_width;
+      x = mon.width - ch_width;
       break;
   }
 
   // Draw the background first
-  fill_rect(mon->pixmap, gc[GC_CLEAR], x, 0, ch_width, bh);
+  fill_rect(mon.pixmap, gc[GC_CLEAR], x, 0, ch_width, bh);
   return x;
 }
 
 void
-draw_lines (monitor_t *mon, int x, int w)
+draw_lines (monitor_t& mon, int x, int w)
 {
   /* We can render both at the same time */
   if (attrs & ATTR_OVERL)
-    fill_rect(mon->pixmap, gc[GC_ATTR], x, 0, w, bu);
+    fill_rect(mon.pixmap, gc[GC_ATTR], x, 0, w, bu);
   if (attrs & ATTR_UNDERL)
-    fill_rect(mon->pixmap, gc[GC_ATTR], x, bh - bu, w, bu);
+    fill_rect(mon.pixmap, gc[GC_ATTR], x, bh - bu, w, bu);
 }
 
 void
-draw_shift (monitor_t *mon, int x, int align, int w)
+draw_shift (monitor_t& mon, int x, int align, int w)
 {
   x = shift(mon, x, align, w);
   draw_lines(mon, x, w);
 }
 
 int
-draw_char (monitor_t *mon, font_t& cur_font, int x, int align, uint16_t ch)
+draw_char (monitor_t& mon, font_t& cur_font, int x, int align, uint16_t ch)
 {
   int ch_width = (!cur_font.width_lut.empty()) ?
     cur_font.width_lut[ch - cur_font.char_min].character_width:
@@ -256,7 +255,7 @@ draw_char (monitor_t *mon, font_t& cur_font, int x, int align, uint16_t ch)
   ch = (ch >> 8) | (ch << 8);
 
   // The coordinates here are those of the baseline
-  xcb_poly_text_16_simple(c, mon->pixmap, gc[GC_DRAW],
+  xcb_poly_text_16_simple(c, mon.pixmap, gc[GC_DRAW],
               x, bh / 2 + cur_font.height / 2 - cur_font.descent,
               1, &ch);
 
@@ -386,7 +385,7 @@ area_shift (xcb_window_t win, const int align, int delta)
 }
 
 bool
-area_add (char *str, const char *optend, char **end, monitor_t *mon, const int x, const int align, const int button)
+area_add (char *str, const char *optend, char **end, monitor_t& mon, const int x, const int align, const int button)
 {
   int i;
   char *trail;
@@ -402,7 +401,7 @@ area_add (char *str, const char *optend, char **end, monitor_t *mon, const int x
     a = &area_stack[i];
 
     // Basic safety checks
-    if (!a->cmd || a->align != align || a->window != mon->window) {
+    if (!a->cmd || a->align != align || a->window != mon.window) {
       fprintf(stderr, "Invalid geometry for the clickable area\n");
       return false;
     }
@@ -414,13 +413,13 @@ area_add (char *str, const char *optend, char **end, monitor_t *mon, const int x
         a->end = x;
         break;
       case ALIGN_C:
-        a->begin = mon->width / 2 - size / 2 + a->begin / 2;
+        a->begin = mon.width / 2 - size / 2 + a->begin / 2;
         a->end = a->begin + size;
         break;
       case ALIGN_R:
         // The newest is the rightmost one
-        a->begin = mon->width - size;
-        a->end = mon->width;
+        a->begin = mon.width - size;
+        a->end = mon.width;
         break;
     }
 
@@ -456,7 +455,7 @@ area_add (char *str, const char *optend, char **end, monitor_t *mon, const int x
   a->complete = true;
   a->align = align;
   a->begin = x;
-  a->window = mon->window;
+  a->window = mon.window;
   a->button = button;
 
   *end = trail + 1;
@@ -494,12 +493,12 @@ select_drawable_font (const uint16_t c)
 }
 
 int
-pos_to_absolute(monitor_t *mon, int pos, int align)
+pos_to_absolute(monitor_t& mon, int pos, int align)
 {
   switch (align) {
     case ALIGN_L: return pos;
-    case ALIGN_R: return mon->width - pos;
-    case ALIGN_C: return mon->width / 2 + pos / 2;
+    case ALIGN_R: return mon.width - pos;
+    case ALIGN_C: return mon.width / 2 + pos / 2;
   }
 
   return 0;
@@ -508,13 +507,12 @@ pos_to_absolute(monitor_t *mon, int pos, int align)
 void
 parse (char *text)
 {
-  monitor_t *cur_mon;
   int pos_x, align, button;
   char *p = text, *block_end, *ep;
 
   pos_x = 0;
   align = ALIGN_L;
-  cur_mon = monhead;
+  auto cur_mon = mon_list.begin();
 
   // Reset the default color set
   bgc = dbgc;
@@ -527,8 +525,8 @@ parse (char *text)
   // Reset the stack position
   area_stack.clear();
 
-  for (monitor_t *m = monhead; m != nullptr; m = m->next)
-    fill_rect(m->pixmap, gc[GC_CLEAR], 0, 0, m->width, bh);
+  for (auto& m : mon_list)
+    fill_rect(m.pixmap, gc[GC_CLEAR], 0, 0, m.width, bh);
 
   for (;;) {
     if (*p == '\0' || *p == '\n')
@@ -560,30 +558,30 @@ parse (char *text)
           // empty space.
           case 'l': {
             int left_ep = 0;
-            int right_ep = pos_to_absolute(cur_mon, pos_x, align);
-            draw_lines(cur_mon, left_ep, right_ep - left_ep);
+            int right_ep = pos_to_absolute(*cur_mon, pos_x, align);
+            draw_lines(*cur_mon, left_ep, right_ep - left_ep);
             pos_x = 0; align = ALIGN_L;
           } break;
           case 'c': {
-            int left_ep = pos_to_absolute(cur_mon, pos_x, align);
+            int left_ep = pos_to_absolute(*cur_mon, pos_x, align);
             int right_ep = cur_mon->width / 2;
             if (right_ep < left_ep) {
               int tmp = left_ep;
               left_ep = right_ep;
               right_ep = tmp;
             }
-            draw_lines(cur_mon, left_ep, right_ep - left_ep);
+            draw_lines(*cur_mon, left_ep, right_ep - left_ep);
             pos_x = 0; align = ALIGN_C;
           } break;
           case 'r': {
-            int left_ep = pos_to_absolute(cur_mon, pos_x, align);
+            int left_ep = pos_to_absolute(*cur_mon, pos_x, align);
             int right_ep = cur_mon->width;
             if (right_ep < left_ep) {
               int tmp = left_ep;
               left_ep = right_ep;
               right_ep = tmp;
             }
-            draw_lines(cur_mon, left_ep, right_ep - left_ep);
+            draw_lines(*cur_mon, left_ep, right_ep - left_ep);
             pos_x = 0; align = ALIGN_R;
           } break;
 
@@ -593,7 +591,7 @@ parse (char *text)
             // The range is 1-5
             if (isdigit(*p) && (*p > '0' && *p < '6'))
               button = *p++ - '0';
-            if (!area_add(p, block_end, &p, cur_mon, pos_x, align, button))
+            if (!area_add(p, block_end, &p, *cur_mon, pos_x, align, button))
               return;
           } break;
 
@@ -604,39 +602,37 @@ parse (char *text)
 
           // Set current monitor used for drawing.
           case 'S': {
-            monitor_t *orig_mon = cur_mon;
+            auto orig_mon = cur_mon;
 
             switch (*p) {
               case '+': // Next monitor.
-                if (cur_mon->next) cur_mon = cur_mon->next;
+                if (cur_mon != mon_list.end() - 1) cur_mon++;
                 p += 1;
                 break;
               case '-': // Previous monitor.
-                if (cur_mon->prev) cur_mon = cur_mon->prev;
+                if (cur_mon != mon_list.begin()) cur_mon--;
                 p += 1;
                 break;
               case 'f': // First monitor.
-                cur_mon = monhead;
+                cur_mon = mon_list.begin();
                 p += 1;
                 break;
               case 'l': // Last monitor.
-                cur_mon = montail ? montail : monhead;
+                cur_mon = mon_list.end() - 1;
                 p += 1;
                 break;
               case 'n': { // Named monitor.
                 const size_t name_len = block_end - (p + 1);
-                cur_mon = monhead;
-                while (cur_mon->next) {
+                for(cur_mon = mon_list.begin(); cur_mon != mon_list.end(); cur_mon++) {
                   if (cur_mon->name == p + 1)
                     break;
-                  cur_mon = cur_mon->next;
                 }
                 p += 1 + name_len;
               } break;
               case '0' ... '9': // Numbered monitor.
-                cur_mon = monhead;
-                for (int i = 0; i != *p-'0' && cur_mon->next; i++)
-                  cur_mon = cur_mon->next;
+                cur_mon = mon_list.begin();
+                for (int i = 0; i != *p-'0' && cur_mon != mon_list.end(); i++)
+                  cur_mon++;
                 p += 1;
                 break;
               default:
@@ -657,7 +653,7 @@ parse (char *text)
             if (errno)
               continue;
 
-            draw_shift(cur_mon, pos_x, align, w);
+            draw_shift(*cur_mon, pos_x, align, w);
 
             pos_x += w;
             area_shift(cur_mon->window, align, w);
@@ -740,7 +736,7 @@ parse (char *text)
 
       xcb_change_gc(c, gc[GC_DRAW] , XCB_GC_FONT, &cur_font->ptr);
 
-      int w = draw_char(cur_mon, *cur_font, pos_x, align, ucs);
+      int w = draw_char(*cur_mon, *cur_font, pos_x, align, ucs);
 
       pos_x += w;
       area_shift(cur_mon->window, align, w);
@@ -832,74 +828,46 @@ set_ewmh_atoms ()
   }
 
   // Prepare the strut array
-  for (monitor_t *mon = monhead; mon; mon = mon->next) {
+  for (auto& mon : mon_list) {
     int strut[12] = {0};
     if (topbar) {
       strut[2] = bh;
-      strut[8] = mon->x;
-      strut[9] = mon->x + mon->width - 1;
+      strut[8] = mon.x;
+      strut[9] = mon.x + mon.width - 1;
     } else {
       strut[3]  = bh;
-      strut[10] = mon->x;
-      strut[11] = mon->x + mon->width - 1;
+      strut[10] = mon.x;
+      strut[11] = mon.x + mon.width - 1;
     }
     constexpr unsigned int minus_one = -1;
 
-    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon->window, atom_list[NET_WM_WINDOW_TYPE], XCB_ATOM_ATOM, 32, 1, &atom_list[NET_WM_WINDOW_TYPE_DOCK]);
-    xcb_change_property(c, XCB_PROP_MODE_APPEND,  mon->window, atom_list[NET_WM_STATE], XCB_ATOM_ATOM, 32, 2, &atom_list[NET_WM_STATE_STICKY]);
-    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon->window, atom_list[NET_WM_DESKTOP], XCB_ATOM_CARDINAL, 32, 1, &minus_one );
-    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon->window, atom_list[NET_WM_STRUT_PARTIAL], XCB_ATOM_CARDINAL, 32, 12, strut);
-    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon->window, atom_list[NET_WM_STRUT], XCB_ATOM_CARDINAL, 32, 4, strut);
-    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon->window, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, 3, "bar");
+    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon.window, atom_list[NET_WM_WINDOW_TYPE], XCB_ATOM_ATOM, 32, 1, &atom_list[NET_WM_WINDOW_TYPE_DOCK]);
+    xcb_change_property(c, XCB_PROP_MODE_APPEND,  mon.window, atom_list[NET_WM_STATE], XCB_ATOM_ATOM, 32, 2, &atom_list[NET_WM_STATE_STICKY]);
+    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon.window, atom_list[NET_WM_DESKTOP], XCB_ATOM_CARDINAL, 32, 1, &minus_one );
+    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon.window, atom_list[NET_WM_STRUT_PARTIAL], XCB_ATOM_CARDINAL, 32, 12, strut);
+    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon.window, atom_list[NET_WM_STRUT], XCB_ATOM_CARDINAL, 32, 4, strut);
+    xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon.window, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8, 3, "bar");
   }
 }
 
-monitor_t *
+monitor_t
 monitor_new (int x, int y, int width, int height, std::string name)
 {
-  monitor_t *ret;
-
-  ret = (monitor_t*)calloc(1, sizeof(monitor_t));
-  if (!ret) {
-    fprintf(stderr, "Failed to allocate new monitor\n");
-    exit(EXIT_FAILURE);
-  }
-
-  ret->name = name;
-  ret->x = x;
-  ret->y = (topbar ? by : height - bh - by) + y;
-  ret->width = width;
-  ret->next = ret->prev = nullptr;
-  ret->window = xcb_generate_id(c);
+  y = (topbar ? by : height - bh - by) + y;
+  auto window = xcb_generate_id(c);
 
   int depth = (visual == scr->root_visual) ? XCB_COPY_FROM_PARENT : 32;
   uint32_t window_values[] = { bgc.v, bgc.v, dock, XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_BUTTON_PRESS, colormap };
-  xcb_create_window(c, depth, ret->window, scr->root,
-      ret->x, ret->y, width, bh, 0,
+  xcb_create_window(c, depth, window, scr->root,
+      x, y, width, bh, 0,
       XCB_WINDOW_CLASS_INPUT_OUTPUT, visual,
       XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_EVENT_MASK | XCB_CW_COLORMAP,
       &window_values);
 
-  ret->pixmap = xcb_generate_id(c);
-  xcb_create_pixmap(c, depth, ret->pixmap, ret->window, width, bh);
+  auto pixmap = xcb_generate_id(c);
+  xcb_create_pixmap(c, depth, pixmap, window, width, bh);
 
-  return ret;
-}
-
-void
-monitor_add (monitor_t *mon)
-{
-  if (!monhead) {
-    monhead = mon;
-  } else if (!montail) {
-    montail = mon;
-    monhead->next = mon;
-    mon->prev = monhead;
-  } else {
-    mon->prev = montail;
-    montail->next = mon;
-    montail = montail->next;
-  }
+  return monitor_t(name, x, y, width, height, window, pixmap);
 }
 
 int
@@ -954,17 +922,13 @@ monitor_create_chain (monitor_t *mons, const int num)
     if (mons[i].y + mons[i].height < by)
       continue;
     if (mons[i].width > left) {
-      monitor_t *mon = monitor_new(
+      mon_list.emplace_back(monitor_new(
           mons[i].x + left,
           mons[i].y,
           min(width, mons[i].width - left),
           mons[i].height,
-          mons[i].name);
-
-      if (!mon)
-        break;
-
-      monitor_add(mon);
+          mons[i].name
+      ));
 
       width -= mons[i].width - left;
 
@@ -1038,7 +1002,7 @@ get_randr_monitors ()
     if (is_valid) {
       // There's no need to handle rotated screens here (see #69)
       mons.emplace_back(name_ptr, uint32_t(ci_reply->x), uint32_t(ci_reply->y),
-        ci_reply->width, ci_reply->height, 0, 0, nullptr, nullptr);
+        ci_reply->width, ci_reply->height, 0, 0);
       valid += 1;
     }
 
@@ -1236,7 +1200,7 @@ init (char *wm_name)
   const xcb_query_extension_reply_t *qe_reply;
 
   // Initialize monitor list head and tail
-  monhead = montail = nullptr;
+  mon_list.clear();
 
   // Check if RandR is present
   qe_reply = xcb_get_extension_data(c, &xcb_randr_id);
@@ -1261,7 +1225,7 @@ init (char *wm_name)
   }
 #endif
 
-  if (!monhead) {
+  if (mon_list.empty()) {
     // If I fits I sits
     if (bw < 0)
       bw = scr->width_in_pixels - bx;
@@ -1277,10 +1241,10 @@ init (char *wm_name)
     }
 
     // If no RandR outputs or Xinerama screens, fall back to using whole screen
-    monhead = monitor_new(0, 0, bw, scr->height_in_pixels, "");
+    mon_list.emplace_back(monitor_new(0, 0, bw, scr->height_in_pixels, ""));
   }
 
-  if (!monhead)
+  if (mon_list.empty())
     exit(EXIT_FAILURE);
 
   // For WM that support EWMH atoms
@@ -1288,27 +1252,27 @@ init (char *wm_name)
 
   // Create the gc for drawing
   gc[GC_DRAW] = xcb_generate_id(c);
-  xcb_create_gc(c, gc[GC_DRAW], monhead->pixmap, XCB_GC_FOREGROUND, &fgc.v);
+  xcb_create_gc(c, gc[GC_DRAW], mon_list.front().pixmap, XCB_GC_FOREGROUND, &fgc.v);
 
   gc[GC_CLEAR] = xcb_generate_id(c);
-  xcb_create_gc(c, gc[GC_CLEAR], monhead->pixmap, XCB_GC_FOREGROUND, &bgc.v);
+  xcb_create_gc(c, gc[GC_CLEAR], mon_list.front().pixmap, XCB_GC_FOREGROUND, &bgc.v);
 
   gc[GC_ATTR] = xcb_generate_id(c);
-  xcb_create_gc(c, gc[GC_ATTR], monhead->pixmap, XCB_GC_FOREGROUND, &ugc.v);
+  xcb_create_gc(c, gc[GC_ATTR], mon_list.front().pixmap, XCB_GC_FOREGROUND, &ugc.v);
 
   // Make the bar visible and clear the pixmap
-  for (monitor_t *mon = monhead; mon; mon = mon->next) {
-    fill_rect(mon->pixmap, gc[GC_CLEAR], 0, 0, mon->width, bh);
-    xcb_map_window(c, mon->window);
+  for (auto& mon : mon_list) {
+    fill_rect(mon.pixmap, gc[GC_CLEAR], 0, 0, mon.width, bh);
+    xcb_map_window(c, mon.window);
 
-    uint32_t tmp[] = {mon->x, mon->y};
+    uint32_t tmp[] = {mon.x, mon.y};
     // Make sure that the window really gets in the place it's supposed to be
     // Some WM such as Openbox need this
-    xcb_configure_window(c, mon->window, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y, &tmp);
+    xcb_configure_window(c, mon.window, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y, &tmp);
 
     // Set the WM_NAME atom to the user specified value
     if (wm_name)
-      xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon->window, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8 ,strlen(wm_name), wm_name);
+      xcb_change_property(c, XCB_PROP_MODE_REPLACE, mon.window, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8 ,strlen(wm_name), wm_name);
   }
 
   xcb_flush(c);
@@ -1321,12 +1285,9 @@ cleanup ()
     xcb_close_font(c, font_list[i]->ptr);
   }
 
-  while (monhead) {
-    monitor_t *next = monhead->next;
-    xcb_destroy_window(c, monhead->window);
-    xcb_free_pixmap(c, monhead->pixmap);
-    free(monhead);
-    monhead = next;
+  for(auto& mon : mon_list) {
+    xcb_destroy_window(c, mon.window);
+    xcb_free_pixmap(c, mon.pixmap);
   }
 
   xcb_free_colormap(c, colormap);
@@ -1506,8 +1467,8 @@ main (int argc, char **argv)
     }
 
     if (redraw) { // Copy our temporary pixmap onto the window
-      for (monitor_t *mon = monhead; mon; mon = mon->next) {
-        xcb_copy_area(c, mon->pixmap, mon->window, gc[GC_DRAW], 0, 0, 0, 0, mon->width, bh);
+      for (auto& mon : mon_list) {
+        xcb_copy_area(c, mon.pixmap, mon.window, gc[GC_DRAW], 0, 0, 0, 0, mon.width, bh);
       }
     }
 
